@@ -1,79 +1,122 @@
-from google.colab import drive
-from transformers import BlipProcessor, BlipForConditionalGeneration
-from PIL import Image
-import os
-import csv
-from concurrent.futures import ThreadPoolExecutor
-import torch
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from sklearn.preprocessing import LabelEncoder
 
-# Mount Google Drive
-drive.mount('/content/gdrive')
+# Function to preprocess data
+def preprocess_data(file_path):
+    # Load data
+    data = pd.read_csv(file_path)
 
-# Paths
-base_drive_folder = "/content/gdrive/My Drive/downloads"  # Path to the "downloads" folder in Google Drive
-output_csv = "/content/gdrive/My Drive/captions1.csv"  # Path to save the CSV file
+    # Handle mixed data types warning
+    mixed_cols = data.select_dtypes(include=['object']).columns
+    data[mixed_cols] = data[mixed_cols].astype(str)
 
-# Check for GPU availability and set device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+    # Encode categorical variables
+    encoder = LabelEncoder()
+    for col in data.select_dtypes(include=['object']):
+        data[col] = encoder.fit_transform(data[col])
 
-# Load BLIP model and processor on GPU
-processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
-model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large").to(device)
+    return data
 
-def generate_caption(image_path):
-    """Generate caption for an image using GPU."""
-    try:
-        image = Image.open(image_path).convert("RGB")
-        inputs = processor(image, return_tensors="pt").to(device)
-        caption = model.generate(**inputs)
-        return processor.decode(caption[0], skip_special_tokens=True)
-    except Exception as e:
-        print(f"Error processing {image_path}: {e}")
-        return None
+# Function to train logistic regression model
+def train_logistic_regression(X_train, y_train, X_test, y_test):
+    # Train logistic regression model
+    lr_model = LogisticRegression()
+    lr_model.fit(X_train, y_train)
+    lr_pred = lr_model.predict(X_test)
+    lr_accuracy = accuracy_score(y_test, lr_pred)
+    return lr_model, lr_accuracy
 
-def process_image_batch(image_paths):
-    """Process a batch of images and return captions."""
-    results = []
-    for image_path in image_paths:
-        caption = generate_caption(image_path)
-        if caption:
-            results.append((os.path.basename(image_path), caption))
-    return results
+# Function to train random forest model
+def train_random_forest(X_train, y_train, X_test, y_test):
+    # Train random forest model
+    rf_model = RandomForestClassifier()
+    rf_model.fit(X_train, y_train)
+    rf_pred = rf_model.predict(X_test)
+    rf_accuracy = accuracy_score(y_test, rf_pred)
+    return rf_model, rf_accuracy
 
-def process_images_for_captions(folder_path, output_csv, batch_size=10):
-    """Process images in batches using GPU and save captions to a CSV file."""
-    fieldnames = ["Image Name", "Caption"]
-    all_images = []
+# Function to train SVM model
+def train_svm(X_train, y_train, X_test, y_test):
+    # Train SVM model
+    svm_model = SVC()
+    svm_model.fit(X_train, y_train)
+    svm_pred = svm_model.predict(X_test)
+    svm_accuracy = accuracy_score(y_test, svm_pred)
+    return svm_model, svm_accuracy
 
-    # Collect all image paths
-    for root, _, files in os.walk(folder_path):
-        for file in files:
-            if file.lower().endswith((".jpg", ".jpeg", ".png")):
-                all_images.append(os.path.join(root, file))
+# Function to train neural network model
+def train_neural_network(X_train, y_train, X_test, y_test):
+    # Define neural network architecture
+    model = Sequential([
+        Dense(64, activation='relu', input_shape=(X_train.shape[1],)),
+        Dense(32, activation='relu'),
+        Dense(1, activation='sigmoid')
+    ])
 
-    print(f"Found {len(all_images)} images to process.")
+    # Compile model
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
-    # Process images in batches
-    with open(output_csv, mode="w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        writer.writeheader()
+    # Train model
+    model.fit(X_train, y_train, epochs=10, batch_size=32, validation_split=0.2, verbose=0)
 
-        with ThreadPoolExecutor() as executor:
-            # Divide images into batches
-            for i in range(0, len(all_images), batch_size):
-                batch = all_images[i:i + batch_size]
-                future = executor.submit(process_image_batch, batch)
-                results = future.result()
+    # Evaluate model
+    _, accuracy = model.evaluate(X_test, y_test)
+    return model, accuracy
 
-                # Write results to the CSV
-                for image_name, caption in results:
-                    writer.writerow({
-                        "Image Name": image_name,
-                        "Caption": caption,
-                    })
-                    print(f"Processed {image_name}: {caption}")
+# Function to plot scatter plot of predictions
+def plot_scatter(true_labels, predicted_labels, model_name, accuracy):
+    plt.figure(figsize=(12, 6))
+    plt.scatter(true_labels, predicted_labels, alpha=0.5)
+    plt.xlabel('True Label')
+    plt.ylabel('Predicted Label')
+    plt.title(f'Scatter Plot of Predictions ({model_name} - Accuracy: {accuracy:.2f})')
+    plt.grid(True)
+    plt.show()
+
+# Main function
+def main():
+    # Check if TensorFlow is using GPU
+    if tf.test.gpu_device_name():
+        print('Default GPU Device: {}'.format(tf.test.gpu_device_name()))
+    else:
+        print("Please install GPU version of TF")
+
+    file_path = "completedclient.csv"
+    data = preprocess_data(file_path)
+
+    # Split data into features and target
+    X = data.drop(columns=['client_id'])
+    y = data['client_id']
+
+    # Split data into train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Train logistic regression model
+    lr_model, lr_accuracy = train_logistic_regression(X_train, y_train, X_test, y_test)
+
+    # Train random forest model
+    rf_model, rf_accuracy = train_random_forest(X_train, y_train, X_test, y_test)
+
+    # Train SVM model
+    svm_model, svm_accuracy = train_svm(X_train, y_train, X_test, y_test)
+
+    # Train neural network model
+    nn_model, nn_accuracy = train_neural_network(X_train, y_train, X_test, y_test)
+
+    # Plot scatter plot of predictions
+    plot_scatter(y_test, lr_model.predict(X_test), 'Logistic Regression', lr_accuracy)
+    plot_scatter(y_test, rf_model.predict(X_test), 'Random Forest', rf_accuracy)
+    plot_scatter(y_test, svm_model.predict(X_test), 'SVM', svm_accuracy)
+    plot_scatter(y_test, nn_model.predict(X_test), 'Neural Network', nn_accuracy)
 
 if __name__ == "__main__":
-    process_images_for_captions(base_drive_folder, output_csv)
-    print(f"Captions saved to {output_csv}.")
+    main()
